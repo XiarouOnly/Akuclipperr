@@ -3,6 +3,7 @@ import os
 import uuid
 import subprocess
 import time
+import requests
 from flask import Flask, request, jsonify, send_from_directory, render_template_string
 import yt_dlp
 import imageio_ffmpeg
@@ -259,23 +260,60 @@ def create_clips():
             if not url:
                 return jsonify({'error': 'URL YouTube tidak boleh kosong'}), 400
 
-            ydl_opts = {
-                'format': 'best[height<=480][ext=mp4]/best[ext=mp4]/best',  # Pilih resolusi kecil (480p) agar hemat memori & cepat
-                'outtmpl': raw_video_path,
-                'quiet': True,
-                'no_warnings': True,
-                'noplaylist': True,
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['android', 'ios', 'tv_embedded'],
-                        'player_skip': ['webpage', 'configs']
+            downloaded = False
+            title = "YouTube Video"
+            total_duration = 60
+
+            # Metode 1: Coba pakai yt-dlp dengan client Android/TV
+            try:
+                ydl_opts = {
+                    'format': 'best[height<=480][ext=mp4]/best[ext=mp4]/best',
+                    'outtmpl': raw_video_path,
+                    'quiet': True,
+                    'no_warnings': True,
+                    'noplaylist': True,
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['android', 'ios', 'tv_embedded'],
+                            'player_skip': ['webpage', 'configs']
+                        }
                     }
                 }
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                title = info.get('title', 'YouTube Video')
-                total_duration = info.get('duration', 60)
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    title = info.get('title', 'YouTube Video')
+                    total_duration = info.get('duration', 60)
+                if os.path.exists(raw_video_path):
+                    downloaded = True
+            except Exception:
+                pass
+
+            # Metode 2: Fallback pakai Public Cobalt API agar tembus blokir bot Vercel
+            if not downloaded:
+                try:
+                    cobalt_res = requests.post(
+                        "https://co.wuk.sh/api/json",
+                        json={"url": url, "vQuality": "480"},
+                        headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
+                    ).json()
+                    
+                    if cobalt_res.get("status") == "stream" or cobalt_res.get("status") == "redirect":
+                        video_stream_url = cobalt_res.get("url")
+                        # Download stream langsung via requests
+                        r = requests.get(video_stream_url, stream=True)
+                        with open(raw_video_path, 'wb') as f:
+                            for chunk in r.iter_content(chunk_size=8192):
+                                if chunk:
+                                    f.write(chunk)
+                        
+                        if os.path.exists(raw_video_path) and os.path.getsize(raw_video_path) > 1000:
+                            downloaded = True
+                            total_duration = get_video_duration(ffmpeg_exe, raw_video_path)
+                except Exception as e:
+                    pass
+
+            if not downloaded or not os.path.exists(raw_video_path):
+                return jsonify({'error': 'YouTube memblokir server Vercel. Gunakan tab "Upload Video (Anti-Blokir)" di atas sebagai alternatif instan!'}), 400
 
         if not os.path.exists(raw_video_path):
             return jsonify({'error': 'Gagal menyiapkan file video.'}), 500
