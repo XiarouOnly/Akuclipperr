@@ -1,10 +1,49 @@
-from flask import Flask, send_from_directory
+from flask import Flask, render_template_string
 
-app = Flask(__name__, static_folder='static')
+app = Flask(__name__)
+
+HTML_CONTENT = """<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClipForge AI</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+            background: #1e293b;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        h1 { color: #38bdf8; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ClipForge AI</h1>
+        <p>Aplikasi web Anda siap dijalankan di Vercel!</p>
+    </div>
+</body>
+</html>"""
 
 @app.route('/')
 def index():
-    return send_from_directory('static', 'index.html')
+    return render_template_string(HTML_CONTENT)
+
+@app.route('/favicon.ico')
+def favicon():
+    return '', 204
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
