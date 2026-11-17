@@ -2,6 +2,7 @@
 import os
 import uuid
 import subprocess
+import time
 from flask import Flask, request, jsonify, send_from_directory, render_template_string
 import yt_dlp
 import imageio_ffmpeg
@@ -11,6 +12,19 @@ app = Flask(__name__)
 IS_VERCEL = os.environ.get("VERCEL") == "1"
 CLIPS_DIR = "/tmp/clips" if IS_VERCEL else os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "clips")
 os.makedirs(CLIPS_DIR, exist_ok=True)
+
+def cleanup_old_files():
+    """Membersihkan file lama di folder tmp agar memori tidak pernah penuh"""
+    try:
+        now = time.time()
+        for f in os.listdir(CLIPS_DIR):
+            fp = os.path.join(CLIPS_DIR, f)
+            if os.path.isfile(fp):
+                # Hapus file jika usianya lebih dari 10 menit
+                if now - os.path.getmtime(fp) > 600:
+                    os.remove(fp)
+    except Exception:
+        pass
 
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="id">
@@ -24,11 +38,10 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="w-full max-w-3xl">
         <header class="text-center my-6">
             <h1 class="text-4xl font-extrabold text-cyan-400 tracking-tight">ClipForge AI</h1>
-            <p class="text-slate-400 mt-2">Potong video YouTube atau file lokal otomatis jadi klip vertikal siap upload</p>
+            <p class="text-slate-400 mt-2">Potong video YouTube atau file lokal otomatis jadi klip vertikal siap upload (Hemat Memori)</p>
         </header>
 
         <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-xl">
-            <!-- Tab Switcher -->
             <div class="flex gap-2 mb-5 bg-slate-950 p-1 rounded-xl border border-slate-800">
                 <button onclick="switchTab('youtube')" id="tab-yt" class="flex-1 py-2 rounded-lg text-sm font-bold bg-cyan-500 text-slate-950 transition-all">Link YouTube</button>
                 <button onclick="switchTab('upload')" id="tab-up" class="flex-1 py-2 rounded-lg text-sm font-bold text-slate-400 hover:text-white transition-all">Upload Video (Anti-Blokir)</button>
@@ -80,8 +93,8 @@ HTML_PAGE = """<!DOCTYPE html>
 
         <div id="status-box" class="hidden text-center my-8 p-6 bg-slate-900/50 border border-slate-800 rounded-2xl">
             <div class="inline-block animate-spin rounded-full h-10 w-10 border-4 border-cyan-500 border-t-transparent"></div>
-            <p id="status-text" class="text-cyan-400 mt-4 font-medium animate-pulse">Memproses & memotong video...</p>
-            <p class="text-xs text-slate-500 mt-1">Tunggu sebentar, server sedang merender klip vertikal</p>
+            <p id="status-text" class="text-cyan-400 mt-4 font-medium animate-pulse">Memproses & merender video...</p>
+            <p class="text-xs text-slate-500 mt-1">File langsung dibersihkan otomatis setelah selesai agar memori aman</p>
         </div>
 
         <div id="error-box" class="hidden my-6 p-4 bg-red-950/60 border border-red-800 text-red-300 rounded-xl text-sm"></div>
@@ -210,6 +223,7 @@ def get_video_duration(ffmpeg_exe, filepath):
 
 @app.route('/')
 def index():
+    cleanup_old_files()
     return render_template_string(HTML_PAGE)
 
 @app.route('/favicon.ico')
@@ -222,6 +236,7 @@ def serve_clip(filename):
 
 @app.route('/api/clip', methods=['POST'])
 def create_clips():
+    cleanup_old_files()
     mode = request.form.get('mode', 'youtube')
     clip_duration = int(request.form.get('duration', 30))
     clip_count = int(request.form.get('count', 2))
@@ -244,9 +259,8 @@ def create_clips():
             if not url:
                 return jsonify({'error': 'URL YouTube tidak boleh kosong'}), 400
 
-            # Bypass bot detection dengan menyamar sebagai Android/TV client
             ydl_opts = {
-                'format': 'best[height<=720][ext=mp4]/best[ext=mp4]/best',
+                'format': 'best[height<=480][ext=mp4]/best[ext=mp4]/best',  # Pilih resolusi kecil (480p) agar hemat memori & cepat
                 'outtmpl': raw_video_path,
                 'quiet': True,
                 'no_warnings': True,
@@ -289,11 +303,11 @@ def create_clips():
             ]
 
             if vertical:
-                cmd.extend(["-vf", "crop=ih*(9/16):ih"])
+                cmd.extend(["-vf", "scale=480:-2,crop=ih*(9/16):ih"])
 
             cmd.extend([
-                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
-                "-c:a", "aac", "-b:a", "128k",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                "-c:a", "aac", "-b:a", "96k",
                 out_filepath
             ])
 
@@ -307,6 +321,7 @@ def create_clips():
                     'end': int(end_time)
                 })
 
+        # HAPUS FILE MENTAH UTAMA SEGERA AGAR MEMORI SERVER AMAN & TIDAK PENUH
         if os.path.exists(raw_video_path):
             os.remove(raw_video_path)
 
