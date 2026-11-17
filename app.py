@@ -1,3 +1,4 @@
+```python
 import os
 import uuid
 import subprocess
@@ -7,7 +8,6 @@ import imageio_ffmpeg
 
 app = Flask(__name__)
 
-# Folder untuk menyimpan hasil klip sementara (di Vercel gunakan /tmp agar bisa write)
 IS_VERCEL = os.environ.get("VERCEL") == "1"
 CLIPS_DIR = "/tmp/clips" if IS_VERCEL else os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "clips")
 os.makedirs(CLIPS_DIR, exist_ok=True)
@@ -24,13 +24,27 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="w-full max-w-3xl">
         <header class="text-center my-6">
             <h1 class="text-4xl font-extrabold text-cyan-400 tracking-tight">ClipForge AI</h1>
-            <p class="text-slate-400 mt-2">Potong video YouTube otomatis jadi klip vertikal siap upload</p>
+            <p class="text-slate-400 mt-2">Potong video YouTube atau file lokal otomatis jadi klip vertikal siap upload</p>
         </header>
 
         <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-xl">
-            <label class="block text-sm font-medium text-slate-300 mb-2">Link Video YouTube</label>
-            <input type="url" id="yt-link" placeholder="https://www.youtube.com/watch?v=..." 
-                class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-slate-100 focus:outline-none focus:border-cyan-500 mb-4">
+            <!-- Tab Switcher -->
+            <div class="flex gap-2 mb-5 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                <button onclick="switchTab('youtube')" id="tab-yt" class="flex-1 py-2 rounded-lg text-sm font-bold bg-cyan-500 text-slate-950 transition-all">Link YouTube</button>
+                <button onclick="switchTab('upload')" id="tab-up" class="flex-1 py-2 rounded-lg text-sm font-bold text-slate-400 hover:text-white transition-all">Upload Video (Anti-Blokir)</button>
+            </div>
+
+            <div id="input-yt-group">
+                <label class="block text-sm font-medium text-slate-300 mb-2">Link Video YouTube</label>
+                <input type="url" id="yt-link" placeholder="https://www.youtube.com/watch?v=..." 
+                    class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-slate-100 focus:outline-none focus:border-cyan-500 mb-4">
+            </div>
+
+            <div id="input-up-group" class="hidden">
+                <label class="block text-sm font-medium text-slate-300 mb-2">Pilih File Video (MP4 / MOV)</label>
+                <input type="file" id="video-file" accept="video/*" 
+                    class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-300 mb-4 file:mr-4 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-cyan-500 file:text-slate-950">
+            </div>
 
             <div class="grid grid-cols-2 gap-4 mb-4">
                 <div>
@@ -66,8 +80,8 @@ HTML_PAGE = """<!DOCTYPE html>
 
         <div id="status-box" class="hidden text-center my-8 p-6 bg-slate-900/50 border border-slate-800 rounded-2xl">
             <div class="inline-block animate-spin rounded-full h-10 w-10 border-4 border-cyan-500 border-t-transparent"></div>
-            <p id="status-text" class="text-cyan-400 mt-4 font-medium animate-pulse">Mengunduh & memotong video...</p>
-            <p class="text-xs text-slate-500 mt-1">Proses ini memakan waktu 15-60 detik tergantung panjang video</p>
+            <p id="status-text" class="text-cyan-400 mt-4 font-medium animate-pulse">Memproses & memotong video...</p>
+            <p class="text-xs text-slate-500 mt-1">Tunggu sebentar, server sedang merender klip vertikal</p>
         </div>
 
         <div id="error-box" class="hidden my-6 p-4 bg-red-950/60 border border-red-800 text-red-300 rounded-xl text-sm"></div>
@@ -79,22 +93,60 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
 
     <script>
-        async function processVideo() {
-            const url = document.getElementById('yt-link').value.trim();
-            const duration = parseInt(document.getElementById('clip-duration').value);
-            const count = parseInt(document.getElementById('clip-count').value);
-            const vertical = document.getElementById('crop-vertical').checked;
+        let currentMode = 'youtube';
 
-            if (!url) {
-                alert('Masukkan link YouTube dulu, Bro!');
-                return;
+        function switchTab(mode) {
+            currentMode = mode;
+            const tabYt = document.getElementById('tab-yt');
+            const tabUp = document.getElementById('tab-up');
+            const groupYt = document.getElementById('input-yt-group');
+            const groupUp = document.getElementById('input-up-group');
+
+            if (mode === 'youtube') {
+                tabYt.className = 'flex-1 py-2 rounded-lg text-sm font-bold bg-cyan-500 text-slate-950 transition-all';
+                tabUp.className = 'flex-1 py-2 rounded-lg text-sm font-bold text-slate-400 hover:text-white transition-all';
+                groupYt.classList.remove('hidden');
+                groupUp.classList.add('hidden');
+            } else {
+                tabUp.className = 'flex-1 py-2 rounded-lg text-sm font-bold bg-cyan-500 text-slate-950 transition-all';
+                tabYt.className = 'flex-1 py-2 rounded-lg text-sm font-bold text-slate-400 hover:text-white transition-all';
+                groupUp.classList.remove('hidden');
+                groupYt.classList.add('hidden');
             }
+        }
+
+        async function processVideo() {
+            const duration = document.getElementById('clip-duration').value;
+            const count = document.getElementById('clip-count').value;
+            const vertical = document.getElementById('crop-vertical').checked;
 
             const btn = document.getElementById('submit-btn');
             const statusBox = document.getElementById('status-box');
             const errorBox = document.getElementById('error-box');
             const resultsBox = document.getElementById('results-box');
             const clipsGrid = document.getElementById('clips-grid');
+
+            const formData = new FormData();
+            formData.append('mode', currentMode);
+            formData.append('duration', duration);
+            formData.append('count', count);
+            formData.append('vertical', vertical);
+
+            if (currentMode === 'youtube') {
+                const url = document.getElementById('yt-link').value.trim();
+                if (!url) {
+                    alert('Masukkan link YouTube dulu, Bro!');
+                    return;
+                }
+                formData.append('url', url);
+            } else {
+                const fileInput = document.getElementById('video-file');
+                if (!fileInput.files.length) {
+                    alert('Pilih file video dulu, Bro!');
+                    return;
+                }
+                formData.append('file', fileInput.files[0]);
+            }
 
             btn.disabled = true;
             btn.classList.add('opacity-50');
@@ -106,8 +158,7 @@ HTML_PAGE = """<!DOCTYPE html>
             try {
                 const response = await fetch('/api/clip', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url, duration, count, vertical })
+                    body: formData
                 });
 
                 const data = await response.json();
@@ -135,7 +186,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
                 resultsBox.classList.remove('hidden');
             } catch (err) {
-                errorBox.textContent = 'Error: ' + err.message;
+                errorBox.innerHTML = '<strong>Error:</strong> ' + err.message + '<br><span class="text-xs text-slate-400 mt-1 block">Tips: Jika YouTube memblokir IP server Vercel, gunakan tab <b>Upload Video (Anti-Blokir)</b> di atas!</span>';
                 errorBox.classList.remove('hidden');
             } finally {
                 btn.disabled = false;
@@ -146,6 +197,16 @@ HTML_PAGE = """<!DOCTYPE html>
     </script>
 </body>
 </html>"""
+
+def get_video_duration(ffmpeg_exe, filepath):
+    cmd = [ffmpeg_exe, "-i", filepath]
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    for line in res.stderr.splitlines():
+        if "Duration:" in line:
+            time_str = line.split("Duration:")[1].split(",")[0].strip()
+            h, m, s = time_str.split(":")
+            return int(float(h) * 3600 + float(m) * 60 + float(s))
+    return 60
 
 @app.route('/')
 def index():
@@ -161,40 +222,51 @@ def serve_clip(filename):
 
 @app.route('/api/clip', methods=['POST'])
 def create_clips():
-    data = request.get_json()
-    url = data.get('url')
-    clip_duration = int(data.get('duration', 30))
-    clip_count = int(data.get('count', 2))
-    vertical = bool(data.get('vertical', True))
-
-    if not url:
-        return jsonify({'error': 'URL YouTube tidak boleh kosong'}), 400
+    mode = request.form.get('mode', 'youtube')
+    clip_duration = int(request.form.get('duration', 30))
+    clip_count = int(request.form.get('count', 2))
+    vertical = request.form.get('vertical', 'true').lower() == 'true'
 
     job_id = str(uuid.uuid4())[:8]
     raw_video_path = os.path.join(CLIPS_DIR, f"{job_id}_raw.mp4")
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
 
     try:
-        # 1. Download video pakai yt-dlp (ambil resolusi max 720p agar cepat & hemat RAM)
-        ydl_opts = {
-            'format': 'best[height<=720][ext=mp4]/best[ext=mp4]/best',
-            'outtmpl': raw_video_path,
-            'quiet': True,
-            'no_warnings': True,
-            'noplaylist': True
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            title = info.get('title', 'YouTube Video')
-            total_duration = info.get('duration', 60)
+        if mode == 'upload':
+            if 'file' not in request.files:
+                return jsonify({'error': 'File video tidak ditemukan.'}), 400
+            file = request.files['file']
+            title = file.filename or "Uploaded Video"
+            file.save(raw_video_path)
+            total_duration = get_video_duration(ffmpeg_exe, raw_video_path)
+        else:
+            url = request.form.get('url')
+            if not url:
+                return jsonify({'error': 'URL YouTube tidak boleh kosong'}), 400
+
+            # Bypass bot detection dengan menyamar sebagai Android/TV client
+            ydl_opts = {
+                'format': 'best[height<=720][ext=mp4]/best[ext=mp4]/best',
+                'outtmpl': raw_video_path,
+                'quiet': True,
+                'no_warnings': True,
+                'noplaylist': True,
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'ios', 'tv_embedded'],
+                        'player_skip': ['webpage', 'configs']
+                    }
+                }
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                title = info.get('title', 'YouTube Video')
+                total_duration = info.get('duration', 60)
 
         if not os.path.exists(raw_video_path):
-            return jsonify({'error': 'Gagal mengunduh video dari YouTube.'}), 500
+            return jsonify({'error': 'Gagal menyiapkan file video.'}), 500
 
-        # 2. Potong video menggunakan FFmpeg bawaan imageio-ffmpeg
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         clips_output = []
-
-        # Tentukan titik mulai pemotongan secara merata (hindari 10 detik awal intro jika video panjang)
         start_offset = 10 if total_duration > (clip_duration * clip_count + 15) else 0
         available_span = max(total_duration - start_offset - clip_duration, 1)
         step = max(available_span // max(clip_count, 1), clip_duration)
@@ -217,7 +289,6 @@ def create_clips():
             ]
 
             if vertical:
-                # Crop tengah ke rasio 9:16
                 cmd.extend(["-vf", "crop=ih*(9/16):ih"])
 
             cmd.extend([
@@ -236,7 +307,6 @@ def create_clips():
                     'end': int(end_time)
                 })
 
-        # Hapus file mentah agar hemat storage
         if os.path.exists(raw_video_path):
             os.remove(raw_video_path)
 
@@ -256,3 +326,4 @@ def create_clips():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+```
